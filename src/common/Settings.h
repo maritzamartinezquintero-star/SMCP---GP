@@ -134,4 +134,12 @@ namespace Reconstruction
 	const auto Save_Binary = "Reconstruction/SaveBinary";
 	constexpr bool Save_Binary_Default_Value = true;
 }
+
+namespace Compensation
+{
+	// GP compensation model (modelo_gp_smcp.yml) and whether it is applied after triangulation.
+	const auto Gp_File = "Compensation/GpFile";
+	const auto Gp_Enabled = "Compensation/GpEnabled";
+	constexpr bool Gp_Enabled_Default_Value = false;
+}
 } // namespace smcp::Settings

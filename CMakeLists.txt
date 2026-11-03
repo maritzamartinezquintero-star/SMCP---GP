@@ -145,6 +145,8 @@ set(SMCP_SOURCES_CORE
     src/core/BusyCursorGuard.h
     src/core/CalibrationData.cpp
     src/core/CalibrationData.h
+    src/core/GPCompensation.cpp
+    src/core/GPCompensation.h
     src/core/IoUtil.cpp
     src/core/IoUtil.h
     src/core/PointcloudOps.cpp
@@ -265,6 +267,21 @@ if(BUILD_TESTING)
     target_compile_options(SMCP_ai_tests PRIVATE /W3 /utf-8)
     target_link_libraries(SMCP_ai_tests PRIVATE Qt5::Core)
     add_test(NAME ai_model_contract COMMAND SMCP_ai_tests)
+
+    add_executable(SMCP_gp_tests
+        tests/GPCompensationTests.cpp
+        src/core/GPCompensation.cpp
+        src/core/GPCompensation.h
+    )
+    target_include_directories(SMCP_gp_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_compile_definitions(SMCP_gp_tests PRIVATE NOMINMAX _USE_MATH_DEFINES)
+    target_compile_options(SMCP_gp_tests PRIVATE /W3 /utf-8 /external:W0)
+    target_link_libraries(SMCP_gp_tests PRIVATE opencv_core)
+    add_test(NAME gp_compensation_matches_python
+        COMMAND SMCP_gp_tests
+                "${CMAKE_SOURCE_DIR}/tests/fixtures/modelo_gp_smcp.yml"
+                "${CMAKE_SOURCE_DIR}/tests/fixtures/gp_reference.txt"
+        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}")
 endif()
 
 # ---------------------------------------------------------------------------

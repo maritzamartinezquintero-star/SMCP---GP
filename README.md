@@ -21,6 +21,9 @@ Projector-Camera Calibration* by Daniel Moreno and Gabriel Taubin (3DimPVT 2012,
   PointCleanNet) running in WSL.
 - Compare, recolor, rename, reorder, hide, delete, and export point clouds in the editor,
   either one per file or combined into one file.
+- Compensate systematic errors of the reconstructed point cloud with a physics + Gaussian
+  process (GP) model trained on a three-sphere artifact. See
+  [GP compensation](#gp-compensation).
 
 ## Requirements
 
@@ -121,6 +124,42 @@ complete `build/ninja-release/bin` directory and not only the executable. Direct
 capture on the target computer additionally requires compatible camera drivers, and the
 optional AI models require the WSL setup described in the quick start.
 
+## GP compensation
+
+This version adds the GP compensation developed by Maritza Martínez Quintero (CENAM). Right
+after triangulation, every point is corrected with
+
+```text
+p_f = p (1 + s(z, rho))                                  physical block, 6 coefficients
+p  <- p_f - [ B (p_f - p0) + sum_j k52(p_f, P_j) W_j ]   GP residual field (Matérn 5/2)
+```
+
+The model is trained in Python (`gp_smcp.py`) and exported to `modelo_gp_smcp.yml` with
+`exporta_modelo_yml.py`; both scripts live in the GPR repository. Validation on 37 scans of
+the three-sphere artifact (5-fold cross-validation by scan): 378 µm RMS with a fixed scale
+correction, 55.4 µm RMS with the GP model (85.3 % improvement).
+
+Use it from the **Calibration** menu:
+
+| Action | What it does |
+|---|---|
+| *Load GP compensation model...* | Loads `modelo_gp_smcp.yml` and enables the compensation |
+| *Apply GP compensation on reconstruction* | Turns the compensation on or off for **Reconstruct** |
+| *Compensate existing .xyz file...* | Corrects a saved XYZ file and writes `<name>_gp.xyz` |
+
+- The model stores the calibration it was trained with. If the loaded calibration differs,
+  SMCP warns and saves the cloud **without** compensation.
+- Compensated clouds are offered with a `_gp` suffix. Files already ending in `_gp` are not
+  compensated again.
+- Points outside the training volume are corrected by extrapolation and counted in the
+  status message.
+- Apply the AI denoising models in the editor only **after** the GP compensation: the model
+  was trained on raw, uncompensated clouds.
+- `ctest` runs `gp_compensation_matches_python`, which compares the C++ correction with
+  reference values computed in Python (tolerance 0.01 µm).
+
+Settings are stored under `Compensation/GpFile` and `Compensation/GpEnabled`.
+
 ## Documentation
 
 - [Documentation index](docs/README.md)
@@ -140,6 +179,7 @@ calibration file schema.
 - José Luis Aguilera Luzania
 - Agustín Brau Ávila
 - Octavio Icasio Hernández
+- Maritza Martínez Quintero (GP compensation)
 
 ## License
 

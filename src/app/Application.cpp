@@ -33,6 +33,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <QProgressDialog>
 #include <QMessageBox>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QStyleFactory>
 
 #include <cmath>
@@ -45,6 +46,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <opencv2/calib3d/calib3d.hpp>
 
 #include "core/StructuredLight.h"
+#include "core/BusyCursorGuard.h"
 
 namespace smcp
 {
@@ -1282,6 +1284,10 @@ bool Application::SaveCalibration(QWidget* parentWidget)
 
 void Application::ReconstructModel(int level, Scan3d::Pointcloud& pointcloud, QWidget* parentWidget)
 {
+	//never keep the previous cloud: on any early return it would be saved (and compensated) again
+	pointcloud.Clear();
+	pointcloudGpCompensated = false;
+
 	if (level < 0 || level >= model.rowCount())
 	{   //invalid row
 		return;
@@ -1314,6 +1320,9 @@ void Application::ReconstructModel(int level, Scan3d::Pointcloud& pointcloud, QW
 
 	Scan3d::ReconstructModel(pointcloud, calib, patternImage, minMaxImage, colorImage, projectorSize, threshold, maxDist, parentWidget);
 
+	//compensation: right after triangulation, before normals or any filtering
+	pointcloudGpCompensated = ApplyGpCompensation(pointcloud, parentWidget);
+
 	//debug: dump code to file
 	/*
 	QString path = config.value(Settings::App::Root_Directory).toString();
@@ -1332,6 +1341,10 @@ void Application::ReconstructModel(int level, Scan3d::Pointcloud& pointcloud, QW
 
 void Application::ReconstructModelDump(cv::Mat2f const& patternImage, cv::Mat2b const& minMaxImage, cv::Mat3b const& colorImage, Scan3d::Pointcloud& pointcloud, QWidget* parentWidget)
 {
+	//never keep the previous cloud: on any early return it would be saved (and compensated) again
+	pointcloud.Clear();
+	pointcloudGpCompensated = false;
+
 	if (!patternImage.data || !minMaxImage.data || !colorImage.data)
 	{   //invalid dump
 		return;
@@ -1347,11 +1360,119 @@ void Application::ReconstructModelDump(cv::Mat2f const& patternImage, cv::Mat2b 
 	double maxDist = config.value(Settings::Reconstruction::Max_Dist, Settings::Reconstruction::Max_Dist_Default_Value).toDouble();;
 
 	Scan3d::ReconstructModel(pointcloud, calib, patternImage, minMaxImage, colorImage, projectorSize, threshold, maxDist, parentWidget);
+
+	//compensation: right after triangulation, before normals or any filtering
+	pointcloudGpCompensated = ApplyGpCompensation(pointcloud, parentWidget);
 }
 
 void Application::ComputeNormals(Scan3d::Pointcloud& pointcloud)
 {
 	Scan3d::ComputeNormals(pointcloud);
+}
+
+bool Application::LoadGpCompensation(QWidget* parentWidget)
+{
+	QString name = config.value(Settings::Compensation::Gp_File, config.value(Settings::App::Root_Directory)).toString();
+	QString filename = QFileDialog::getOpenFileName(parentWidget, "Open GP compensation model", name, "GP model (*.yml)");
+	if (filename.isEmpty())
+	{
+		return false;
+	}
+
+	std::string error;
+	if (!gpCompensation.Load(filename.toStdString(), error))
+	{
+		QMessageBox::critical(parentWidget, "Error", QString("GP compensation model not loaded from %1\n%2").arg(filename).arg(QString::fromStdString(error)));
+		return false;
+	}
+	config.setValue(Settings::Compensation::Gp_File, filename);
+	config.setValue(Settings::Compensation::Gp_Enabled, true);
+
+	if (calib.IsValid() && !gpCompensation.MatchesCalibration(calib.camK, calib.camKc, calib.projK, calib.projKc, calib.R, calib.T, error))
+	{
+		QMessageBox::warning(parentWidget, "GP compensation",
+			QString("The model was loaded, but it does NOT match the current calibration:\n%1\n\n"
+				"Pointclouds will be saved WITHOUT compensation until the calibration\n%2\nis loaded.")
+			.arg(QString::fromStdString(error)).arg(QString::fromStdString(gpCompensation.CalibrationFilename())));
+	}
+	mainWin.show_message(QString("GP compensation loaded from %1").arg(filename));
+	return true;
+}
+
+bool Application::ApplyGpCompensation(Scan3d::Pointcloud& pointcloud, QWidget* parentWidget)
+{
+	if (!config.value(Settings::Compensation::Gp_Enabled, Settings::Compensation::Gp_Enabled_Default_Value).toBool() || !pointcloud.points.data)
+	{   //disabled, or reconstruction canceled
+		return false;
+	}
+
+	std::string error;
+	if (!gpCompensation.IsLoaded())
+	{   //first use in this session: load the model saved in the configuration
+		QString filename = config.value(Settings::Compensation::Gp_File).toString();
+		if (filename.isEmpty() || !gpCompensation.Load(filename.toStdString(), error))
+		{
+			QMessageBox::warning(parentWidget, "GP compensation",
+				QString("GP compensation model could not be loaded (%1).\nThe pointcloud is NOT compensated.")
+				.arg(filename.isEmpty() ? QString("no model selected") : QString::fromStdString(error)));
+			return false;
+		}
+	}
+	if (!gpCompensation.MatchesCalibration(calib.camK, calib.camKc, calib.projK, calib.projKc, calib.R, calib.T, error))
+	{
+		QMessageBox::warning(parentWidget, "GP compensation",
+			QString("%1\nThe pointcloud is NOT compensated.").arg(QString::fromStdString(error)));
+		return false;
+	}
+
+	int outside = 0;
+	int corrected = 0;
+	{
+		const BusyCursorGuard cursorGuard;
+		processEvents();
+		corrected = gpCompensation.Apply(pointcloud.points, &outside);
+	}
+	std::cout << "[GPCompensation] Corrected " << corrected << " points (" << outside
+		<< " outside the training volume)" << std::endl;
+	mainWin.show_message(QString("GP compensation applied to %1 points (%2 outside the training volume)").arg(corrected).arg(outside));
+	return corrected >= 0;
+}
+
+void Application::CompensateXyzFile(QWidget* parentWidget)
+{
+	if (!gpCompensation.IsLoaded() && !LoadGpCompensation(parentWidget))
+	{
+		return;
+	}
+	QString input = QFileDialog::getOpenFileName(parentWidget, "Compensate pointcloud file", config.value(Settings::App::Root_Directory).toString(),
+		"PolyWorks ASCII (*.xyz *.txt)");
+	if (input.isEmpty())
+	{
+		return;
+	}
+	QFileInfo info(input);
+	if (info.completeBaseName().endsWith("_gp", Qt::CaseInsensitive))
+	{   //already compensated: compensating again would apply the correction twice
+		QMessageBox::warning(parentWidget, "GP compensation",
+			QString("%1\nis already compensated (name ends with _gp).\nSelect the original, uncompensated file.").arg(input));
+		return;
+	}
+	QString output = QDir(info.absolutePath()).filePath(info.completeBaseName() + "_gp." + info.suffix());
+
+	std::string error;
+	int outside = 0;
+	int n = -1;
+	{
+		const BusyCursorGuard cursorGuard;
+		processEvents();
+		n = gpCompensation.ApplyXyzFile(input.toStdString(), output.toStdString(), error, &outside);
+	}
+	if (n < 0)
+	{
+		QMessageBox::critical(parentWidget, "Error", QString::fromStdString(error));
+		return;
+	}
+	mainWin.show_message(QString("Compensated %1 points (%2 outside the training volume): %3").arg(n).arg(outside).arg(output));
 }
 
 void Application::GetChessboardWorldCoords(std::vector<cv::Point3f>& worldCorners, cv::Size cornerCount, cv::Size cornerSize)

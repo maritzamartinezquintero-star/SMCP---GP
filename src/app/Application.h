@@ -45,6 +45,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "ui/ProcessingDialog.h"
 #include "core/CalibrationData.h"
 #include "core/Scan3d.h"
+#include "core/GPCompensation.h"
 #include "common/Settings.h"
 
 namespace smcp
@@ -117,6 +118,11 @@ public:
 	void ReconstructModelDump(cv::Mat2f const& patternImage, cv::Mat2b const& minMaxImage, cv::Mat3b const& colorImage, Scan3d::Pointcloud& pointcloud, QWidget* parentWidget = NULL);
 	void ComputeNormals(Scan3d::Pointcloud& pointcloud);
 
+	//GP compensation
+	bool LoadGpCompensation(QWidget* parentWidget = NULL);
+	bool ApplyGpCompensation(Scan3d::Pointcloud& pointcloud, QWidget* parentWidget = NULL);
+	void CompensateXyzFile(QWidget* parentWidget = NULL);
+
 	void MakePatternImages(int level, cv::Mat& colImage, cv::Mat& rowImage);
 	cv::Mat GetProjectorView(int level, bool forceUpdate = false);
 
@@ -145,6 +151,8 @@ public:
 	std::vector<cv::Mat> minMaxList;
 	std::vector<cv::Mat> projectorViewList;
 	Scan3d::Pointcloud pointcloud;
+	GPCompensation gpCompensation;
+	bool pointcloudGpCompensated = false;
 
 	MainWindow mainWin;
 	mutable ProcessingDialog processingDialog;

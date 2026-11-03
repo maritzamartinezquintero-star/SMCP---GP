@@ -161,6 +161,29 @@ MainWindow::MainWindow(QWidget* parent, Qt::WindowFlags flags) :
 	viewButtonGroup->addButton(projector_view_button);
 	viewButtonGroup->addButton(view_3d_view_button);
 
+	// GP compensation actions (Calibration menu).
+	menuCalibration->addSeparator();
+	auto loadGpAction = menuCalibration->addAction("Load GP compensation model...");
+	auto applyGpAction = menuCalibration->addAction("Apply GP compensation on reconstruction");
+	auto compensateFileAction = menuCalibration->addAction("Compensate existing .xyz file...");
+	applyGpAction->setCheckable(true);
+	applyGpAction->setChecked(config.value(Settings::Compensation::Gp_Enabled, Settings::Compensation::Gp_Enabled_Default_Value).toBool());
+	connect(loadGpAction, &QAction::triggered, this, [this, applyGpAction]()
+		{
+			if (APP->LoadGpCompensation(this))
+			{
+				applyGpAction->setChecked(true);
+			}
+		});
+	connect(applyGpAction, &QAction::toggled, this, [](bool checked)
+		{
+			APP->config.setValue(Settings::Compensation::Gp_Enabled, checked);
+		});
+	connect(compensateFileAction, &QAction::triggered, this, [this]()
+		{
+			APP->CompensateXyzFile(this);
+		});
+
 	// Set view.
 	ResetView();
 
@@ -536,7 +559,7 @@ void MainWindow::on_reconstruct_dump_action_triggered(bool checked)
 	}
 
 	//save the points
-	QString name = rootDir + "/pointcloud";
+	QString name = rootDir + (APP->pointcloudGpCompensated ? "/pointcloud_gp" : "/pointcloud");
 	filename = QFileDialog::getSaveFileName(this, "Save pointcloud", name + ".ply", "Pointclouds (*.ply)");
 	if (!filename.isEmpty())
 	{
@@ -758,7 +781,7 @@ void MainWindow::on_reconstruction_action_button_clicked(bool checked)
 
 	// Build default filename from the scan set name.
 	const QString setName = APP->model.data(APP->model.index(row, 0), Qt::DisplayRole).toString();
-	const QString defaultPath = QDir(APP->GetRootDir()).filePath(setName);
+	const QString defaultPath = QDir(APP->GetRootDir()).filePath(setName + (APP->pointcloudGpCompensated ? "_gp" : ""));
 
 	// Offer both PLY and XYZ formats in the save dialog.
 	const QString filter = "PolyWorks ASCII (*.xyz);;PLY ASCII (*.ply);;PLY Binary (*.ply)";
