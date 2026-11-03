@@ -317,8 +317,13 @@ endif()
 if(SMCP_DEPLOY_RUNTIME)
     find_program(WINDEPLOYQT_EXECUTABLE windeployqt HINTS "${SMCP_QT_BIN_DIR}" REQUIRED)
 
+    # windeployqt picks the DLLs of the first qmake in PATH, which may belong to another
+    # kit (msvc2017 x86, for example); only the Qt bin directory of this build is exposed.
+    file(TO_NATIVE_PATH "${SMCP_QT_BIN_DIR}" _qt_bin_native)
+
     add_custom_command(TARGET SMCP POST_BUILD
-        COMMAND "${WINDEPLOYQT_EXECUTABLE}"
+        COMMAND "${CMAKE_COMMAND}" -E env "PATH=${_qt_bin_native}"
+                "${WINDEPLOYQT_EXECUTABLE}"
                 --no-compiler-runtime --no-translations --no-opengl-sw --no-system-d3d-compiler
                 --no-angle --no-quick-import
                 "$<TARGET_FILE:SMCP>"
